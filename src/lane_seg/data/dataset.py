@@ -58,8 +58,7 @@ class SDLaneDataset(Dataset):
                 color=1,
                 thickness=self.thickness,
             )
-        if mask.sum() == 0:
-            raise ValueError(f"Empty GT mask: {json_path}")
+        
 
         return mask
 
