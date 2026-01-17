@@ -14,6 +14,11 @@ data:
   num_workers: 4
   pin_memory: true
   persistent_workers: true
+  use_precomputed_masks: true
+  mask_subdir: "masks"      # precompute 스크립트가 저장한 폴더명
+  mask_ext: "png"
+  fallback_to_json: false    # 마스크 없으면 JSON로 생성해서 진행(디버깅 끝나면 false 추천)
+  lane_thickness: 6
 
 augment:
   enabled: true
