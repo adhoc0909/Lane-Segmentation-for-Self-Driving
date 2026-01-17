@@ -10,7 +10,6 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
-data/
 outputs/
 runs/
 wandb/
