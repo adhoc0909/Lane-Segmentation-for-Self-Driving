@@ -160,3 +160,35 @@ adas-lane-segmentation/
 └── README.md
 📝 License
 This project is licensed under the MIT License.
+
+
+# 🚗 SDLane Lane Segmentation Baseline (Ready-to-Experiment)
+
+SDLane(42dot) 데이터셋으로 **차선 segmentation** baseline을 **학습/평가**까지 바로 수행할 수 있는 템플릿입니다.
+이후에는 **config만 바꿔서 모델/백본/증강/하이퍼파라미터 실험**을 반복할 수 있도록 구성했습니다.
+
+## Quickstart
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+
+# 데이터 경로 (train 폴더)
+export SDLANE_ROOT=/path/to/SDLane/train
+
+python scripts/train.py --config configs/default.yaml
+python scripts/eval.py  --config configs/default.yaml
+```
+
+## Config override 예시
+```bash
+python scripts/train.py --config configs/default.yaml   --paths.run_name exp002   --model.arch deeplabv3plus   --model.encoder resnet50   --train.batch_size 16   --train.epochs 50
+```
+
+## Structure
+- `src/lane_seg/data`: split / dataset / transforms
+- `src/lane_seg/models`: model factory / losses
+- `src/lane_seg/engine`: train/val loops / checkpoint
+- `src/lane_seg/evaluation`: metrics
+- `scripts`: entrypoints (train/eval/infer)
