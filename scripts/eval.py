@@ -2,7 +2,7 @@ import argparse, os
 from pathlib import Path
 import torch
 
-from scripts._bootstrap import *  # noqa
+from _bootstrap import *  # noqa
 
 from lane_seg.utils.config import load_yaml, apply_overrides
 from lane_seg.utils.paths import resolve_sdlane_root, make_run_dir
