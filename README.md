@@ -167,7 +167,8 @@ This project is licensed under the MIT License.
 SDLane(42dot) 데이터셋으로 **차선 segmentation** baseline을 **학습/평가**까지 바로 수행할 수 있는 템플릿입니다.
 이후에는 **config만 바꿔서 모델/백본/증강/하이퍼파라미터 실험**을 반복할 수 있도록 구성했습니다.
 
-## Quickstart
+# Quickstart
+## Local에서 실행할 경우
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate
