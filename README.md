@@ -181,6 +181,18 @@ python scripts/train.py --config configs/default.yaml
 python scripts/eval.py  --config configs/default.yaml
 ```
 
+## Colab에서 실행할 경우
+데이터셋 드라이브에 저장한 후
+
+!git clone https://github.com/adhoc0909/Lane-Segmentation-for-Self-Driving.git
+%cd Lane-Segmentation-for-Self-Driving/
+%env SDLANE_ROOT=/path/to/SDLane/train
+!pip install -r requirements.txt
+!python scripts/train.py --config configs/default.yaml
+!python scripts/eval.py  --config configs/default.yaml
+
+
+
 ## Config override 예시
 ```bash
 python scripts/train.py --config configs/default.yaml   --paths.run_name exp002   --model.arch deeplabv3plus   --model.encoder resnet50   --train.batch_size 16   --train.epochs 50
