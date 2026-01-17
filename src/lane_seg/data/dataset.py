@@ -28,17 +28,39 @@ class SDLaneDataset(Dataset):
             raise ValueError(f'Unknown list format: {item}')
         return parts[-2], parts[-1]
 
-    def _label_to_mask(self, label_path: Path, h: int, w: int):
-        mask = np.zeros((h, w), dtype=np.uint8)
-        with open(label_path, "r", encoding="utf-8") as f:
+    def _label_to_mask(self, json_path, h, w):
+        import json
+        import cv2
+        import numpy as np
+
+        with open(json_path, "r") as f:
             data = json.load(f)
 
-        lanes = data.get("lanes") or data.get("Lane") or data.get("lane") or []
+        # ✅ SDLane format
+        lanes = data.get("geometry", [])
+        mask = np.zeros((h, w), dtype=np.uint8)
+
         for lane in lanes:
-            pts = np.array(lane, dtype=np.int32)
-            if pts.ndim != 2 or pts.shape[0] < 2:
+            if len(lane) < 2:
                 continue
-            cv2.polylines(mask, [pts], False, 1, thickness=self.thickness)
+
+            pts = np.array(lane, dtype=np.float32)
+
+            # 좌표 클리핑 (음수 / 이미지 밖 방지)
+            pts[:, 0] = np.clip(pts[:, 0], 0, w - 1)
+            pts[:, 1] = np.clip(pts[:, 1], 0, h - 1)
+
+            pts = pts.astype(np.int32)
+            cv2.polylines(
+                mask,
+                [pts],
+                isClosed=False,
+                color=1,
+                thickness=self.thickness,
+            )
+        if mask.sum() == 0:
+            raise ValueError(f"Empty GT mask: {json_path}")
+
         return mask
 
     def __getitem__(self, idx):
