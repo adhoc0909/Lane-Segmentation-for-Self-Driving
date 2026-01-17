@@ -160,7 +160,7 @@ adas-lane-segmentation/
 └── README.md
 📝 License
 This project is licensed under the MIT License.
-
+---
 
 # 🚗 SDLane Lane Segmentation Baseline (Ready-to-Experiment)
 
