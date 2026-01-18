@@ -125,6 +125,6 @@ class SDLaneDataset(Dataset):
 
         img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
         mask = torch.from_numpy(mask).unsqueeze(0).float()
-        if idx < 20:
-            print("mask_exists:", mask_path.exists(), "mask_path:", mask_path)
+        # if idx < 20:
+        #     print("mask_exists:", mask_path.exists(), "mask_path:", mask_path)
         return img, mask
