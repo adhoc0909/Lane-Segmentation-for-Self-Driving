@@ -21,3 +21,5 @@ checkpoints/
 *.onnx
 .ipynb_checkpoints/
 *.log
+checkpoints/
+*.mp4
