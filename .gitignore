@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.so
+*.zip
 *.egg-info/
 dist/
 build/

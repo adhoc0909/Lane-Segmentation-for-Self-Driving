@@ -14,6 +14,7 @@ from lane_seg.models.losses import build_loss
 from lane_seg.engine.loops import train_one_epoch, validate
 from lane_seg.engine.checkpoint import save_checkpoint
 
+
 def build_parser():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="configs/default.yaml")
@@ -37,8 +38,10 @@ def build_parser():
     p.add_argument("--eval.threshold", type=float)
     return p
 
+
 def str2bool(x):
-    return str(x).lower() in ("1","true","yes","y","t")
+    return str(x).lower() in ("1", "true", "yes", "y", "t")
+
 
 def main():
     args = build_parser().parse_args()
@@ -66,17 +69,28 @@ def main():
 
     model = build_model(cfg).to(device)
     loss_fn = build_loss(cfg)
-    opt = torch.optim.AdamW(model.parameters(), lr=float(cfg["train"]["lr"]), weight_decay=float(cfg["train"]["weight_decay"]))
+    opt = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(cfg["train"]["lr"]),
+        weight_decay=float(cfg["train"]["weight_decay"]),
+    )
 
-    sch_cfg = cfg["train"].get("scheduler", {"name":"none"})
+    sch_cfg = cfg["train"].get("scheduler", {"name": "none"})
     sch_name = (sch_cfg.get("name") or "none").lower()
     scheduler = None
     if sch_name == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=int(sch_cfg.get("t_max", cfg["train"]["epochs"])))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt, T_max=int(sch_cfg.get("t_max", cfg["train"]["epochs"]))
+        )
     elif sch_name == "step":
-        scheduler = torch.optim.lr_scheduler.StepLR(opt, step_size=int(sch_cfg.get("step_size", 10)), gamma=float(sch_cfg.get("gamma", 0.1)))
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            opt, step_size=int(sch_cfg.get("step_size", 10)), gamma=float(sch_cfg.get("gamma", 0.1))
+        )
 
-    logger = CSVLogger(run_dir / "metrics.csv", fieldnames=["epoch","train_loss","val_loss","dice","iou","lr"])
+    logger = CSVLogger(
+        run_dir / "metrics.csv",
+        fieldnames=["epoch", "train_loss", "val_loss", "dice", "iou", "precision", "recall", "f1", "lr"],
+    )
 
     best = -1e9
     metric_name = cfg["train"]["checkpoint"]["metric"]
@@ -84,10 +98,32 @@ def main():
     thr = float(cfg["eval"]["threshold"])
 
     for epoch in range(1, int(cfg["train"]["epochs"]) + 1):
-        train_loss = train_one_epoch(model, train_loader, opt, loss_fn, device, amp=bool(cfg["train"]["amp"]), grad_clip_norm=float(cfg["train"]["grad_clip_norm"]))
+        train_loss = train_one_epoch(
+            model,
+            train_loader,
+            opt,
+            loss_fn,
+            device,
+            amp=bool(cfg["train"]["amp"]),
+            grad_clip_norm=float(cfg["train"]["grad_clip_norm"]),
+        )
+
         metrics = validate(model, val_loader, loss_fn, device, thr=thr)
         lr = opt.param_groups[0]["lr"]
-        logger.log({"epoch": epoch, "train_loss": train_loss, "val_loss": metrics["val_loss"], "dice": metrics["dice"], "iou": metrics["iou"], "lr": lr})
+
+        logger.log(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": metrics["val_loss"],
+                "dice": metrics["dice"],
+                "iou": metrics["iou"],
+                "precision": metrics["precision"],
+                "recall": metrics["recall"],
+                "f1": metrics["f1"],
+                "lr": lr,
+            }
+        )
 
         save_every = int(cfg["train"]["checkpoint"].get("save_every", 1))
         if save_every > 0 and epoch % save_every == 0:
@@ -102,9 +138,20 @@ def main():
         if scheduler is not None:
             scheduler.step()
 
-        print(f"[Epoch {epoch:03d}] train_loss={train_loss:.4f} val_loss={metrics['val_loss']:.4f} dice={metrics['dice']:.4f} iou={metrics['iou']:.4f} best_{metric_name}={best:.4f}")
+        print(
+            f"[Epoch {epoch:03d}] "
+            f"train_loss={train_loss:.4f} "
+            f"val_loss={metrics['val_loss']:.4f} "
+            f"dice={metrics['dice']:.4f} "
+            f"iou={metrics['iou']:.4f} "
+            f"precision={metrics['precision']:.4f} "
+            f"recall={metrics['recall']:.4f} "
+            f"f1={metrics['f1']:.4f} "
+            f"best_{metric_name}={best:.4f}"
+        )
 
     print(f"✅ Done. outputs: {run_dir}")
+
 
 if __name__ == "__main__":
     main()
