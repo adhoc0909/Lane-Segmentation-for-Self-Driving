@@ -42,6 +42,11 @@ model:
   num_classes: 1
 
 train:
+  early_stop:
+    enabled: true
+    patience: 15        # 개선 없으면 몇 epoch 기다릴지
+    min_delta: 0.0      # 개선으로 인정할 최소 변화량
+    warmup_epochs: 0    # 0이면 바로 적용, 예: 5로 두면 5epoch 이후부터 early stop
   device: cuda
   batch_size: 8
   epochs: 20
@@ -55,7 +60,7 @@ train:
     step_size: 10
     gamma: 0.1
   checkpoint:
-    save_every: 1
+    save_every: 10
     metric: dice
     mode: max
 
@@ -72,3 +77,9 @@ infer:
   weights: null
   input: null
   output: outputs/infer
+
+wandb:
+  enabled: true          # false면 wandb 완전 비활성
+  project: "lane-segmentation"
+  entity: null           # 개인 계정이면 null
+  watch: false           # true면 gradient/parameter 추적 (무거움)

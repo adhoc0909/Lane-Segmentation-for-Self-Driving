@@ -51,7 +51,6 @@ def main():
     if cfg["paths"].get("sdlane_root") is None:
         cfg["paths"]["sdlane_root"] = os.environ.get("SDLANE_ROOT")
 
-    # normalize bool-like overrides if provided as strings
     if isinstance(cfg["model"].get("pretrained"), str):
         cfg["model"]["pretrained"] = str2bool(cfg["model"]["pretrained"])
     if isinstance(cfg["train"].get("amp"), str):
@@ -65,10 +64,30 @@ def main():
 
     device = torch.device(cfg["train"]["device"] if torch.cuda.is_available() else "cpu")
 
+    # -----------------------------
+    # WandB init (optional)
+    # -----------------------------
+    wb_cfg = cfg.get("wandb", {}) or {}
+    use_wandb = bool(wb_cfg.get("enabled", False))
+    if use_wandb:
+        import wandb  # lazy import
+
+        wandb.init(
+            project=wb_cfg.get("project", "lane-segmentation"),
+            entity=wb_cfg.get("entity"),
+            name=cfg["paths"].get("run_name"),
+            dir=str(run_dir),
+            config=cfg,
+        )
+
     train_loader, val_loader, _, _ = build_loaders(cfg, sdlane_root, run_dir)
 
     model = build_model(cfg).to(device)
     loss_fn = build_loss(cfg)
+
+    if use_wandb and wb_cfg.get("watch", False):
+        wandb.watch(model, log="gradients", log_freq=100)
+
     opt = torch.optim.AdamW(
         model.parameters(),
         lr=float(cfg["train"]["lr"]),
@@ -84,7 +103,9 @@ def main():
         )
     elif sch_name == "step":
         scheduler = torch.optim.lr_scheduler.StepLR(
-            opt, step_size=int(sch_cfg.get("step_size", 10)), gamma=float(sch_cfg.get("gamma", 0.1))
+            opt,
+            step_size=int(sch_cfg.get("step_size", 10)),
+            gamma=float(sch_cfg.get("gamma", 0.1)),
         )
 
     logger = CSVLogger(
@@ -92,11 +113,30 @@ def main():
         fieldnames=["epoch", "train_loss", "val_loss", "dice", "iou", "precision", "recall", "f1", "lr"],
     )
 
-    best = -1e9
+    # -----------------------------
+    # Early Stopping config
+    # -----------------------------
+    es_cfg = cfg["train"].get("early_stop", {}) or {}
+    es_enabled = bool(es_cfg.get("enabled", True))
+    patience = int(es_cfg.get("patience", 15))
+    min_delta = float(es_cfg.get("min_delta", 0.0))
+    warmup_epochs = int(es_cfg.get("warmup_epochs", 0))
+
     metric_name = cfg["train"]["checkpoint"]["metric"]
-    mode = cfg["train"]["checkpoint"]["mode"]
+    mode = (cfg["train"]["checkpoint"]["mode"] or "max").lower()
     thr = float(cfg["eval"]["threshold"])
 
+    best = -1e9 if mode == "max" else 1e9
+    bad_count = 0
+
+    def is_improved(current, best_val):
+        if mode == "max":
+            return current > (best_val + min_delta)
+        return current < (best_val - min_delta)
+
+    # -----------------------------
+    # Training loop
+    # -----------------------------
     for epoch in range(1, int(cfg["train"]["epochs"]) + 1):
         train_loss = train_one_epoch(
             model,
@@ -111,29 +151,42 @@ def main():
         metrics = validate(model, val_loader, loss_fn, device, thr=thr)
         lr = opt.param_groups[0]["lr"]
 
-        logger.log(
-            {
-                "epoch": epoch,
-                "train_loss": train_loss,
-                "val_loss": metrics["val_loss"],
-                "dice": metrics["dice"],
-                "iou": metrics["iou"],
-                "precision": metrics["precision"],
-                "recall": metrics["recall"],
-                "f1": metrics["f1"],
-                "lr": lr,
-            }
-        )
+        log_dict = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": metrics["val_loss"],
+            "dice": metrics["dice"],
+            "iou": metrics["iou"],
+            "precision": metrics["precision"],
+            "recall": metrics["recall"],
+            "f1": metrics["f1"],
+            "lr": lr,
+        }
+
+        logger.log(log_dict)
+        if use_wandb:
+            wandb.log(log_dict, step=epoch)
 
         save_every = int(cfg["train"]["checkpoint"].get("save_every", 1))
         if save_every > 0 and epoch % save_every == 0:
-            save_checkpoint(run_dir / "checkpoints" / f"epoch_{epoch:03d}.pt", model, opt, epoch, metrics, cfg)
+            save_checkpoint(
+                run_dir / "checkpoints" / f"epoch_{epoch:03d}.pt",
+                model,
+                opt,
+                epoch,
+                metrics,
+                cfg,
+            )
 
-        current = metrics[metric_name]
-        improved = current > best if mode == "max" else current < best
+        current = float(metrics[metric_name])
+        improved = is_improved(current, best)
         if improved:
             best = current
+            bad_count = 0
             save_checkpoint(run_dir / "checkpoints" / "best.pt", model, opt, epoch, metrics, cfg)
+        else:
+            if es_enabled and epoch > warmup_epochs:
+                bad_count += 1
 
         if scheduler is not None:
             scheduler.step()
@@ -147,8 +200,19 @@ def main():
             f"precision={metrics['precision']:.4f} "
             f"recall={metrics['recall']:.4f} "
             f"f1={metrics['f1']:.4f} "
-            f"best_{metric_name}={best:.4f}"
+            f"best_{metric_name}={best:.4f} "
+            f"bad={bad_count}/{patience}"
         )
+
+        if es_enabled and epoch > warmup_epochs and bad_count >= patience:
+            print(
+                f"🛑 EarlyStopping triggered: no improvement in '{metric_name}' "
+                f"for {patience} epochs (min_delta={min_delta}, mode={mode})."
+            )
+            break
+
+    if use_wandb:
+        wandb.finish()
 
     print(f"✅ Done. outputs: {run_dir}")
 
