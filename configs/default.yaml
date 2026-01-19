@@ -15,7 +15,7 @@ data:
       test:
         dir: "test"
         list: "test_list.txt"
-  image_size: [960, 540]   # W,H
+  image_size: [640, 400]   # W,H
   lane_thickness: 6
   val_ratio: 0.2
   num_workers: 4
