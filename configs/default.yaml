@@ -63,6 +63,8 @@ train:
     save_every: 10
     metric: dice
     mode: max
+  resume: null   # 이어학습 안 하면 null, 하면 모델 경로
+
 
 loss:
   name: bce_dice

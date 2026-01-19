@@ -34,6 +34,7 @@ def build_parser():
     p.add_argument("--train.weight_decay", type=float)
     p.add_argument("--train.amp")
     p.add_argument("--train.grad_clip_norm", type=float)
+    p.add_argument("--train.resume")  # ✅ resume ckpt path
     p.add_argument("--loss.name")
     p.add_argument("--eval.threshold", type=float)
     return p
@@ -41,6 +42,58 @@ def build_parser():
 
 def str2bool(x):
     return str(x).lower() in ("1", "true", "yes", "y", "t")
+
+
+def load_checkpoint(ckpt_path: Path, model, optimizer=None, device="cpu"):
+    """
+    Robust checkpoint loader.
+    Supports common keys:
+      - model_state / model / state_dict
+      - optimizer_state / optimizer
+      - epoch
+      - metrics (dict)
+      - best (float)
+      - bad_count (int)   (optional; for early stop continuity)
+    """
+    ckpt = torch.load(str(ckpt_path), map_location=device)
+
+    if isinstance(ckpt, dict):
+        # model
+        if "model_state" in ckpt and isinstance(ckpt["model_state"], dict):
+            model.load_state_dict(ckpt["model_state"], strict=True)
+        elif "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
+            model.load_state_dict(ckpt["state_dict"], strict=True)
+        elif "model" in ckpt and isinstance(ckpt["model"], dict):
+            model.load_state_dict(ckpt["model"], strict=True)
+        else:
+            # some checkpoints directly are state_dict-like
+            # try loading ckpt as state_dict
+            try:
+                model.load_state_dict(ckpt, strict=True)
+            except Exception as e:
+                raise RuntimeError(f"Unsupported checkpoint format for model. keys={list(ckpt.keys())}") from e
+
+        # optimizer
+        if optimizer is not None:
+            opt_state = None
+            if "optimizer_state" in ckpt and isinstance(ckpt["optimizer_state"], dict):
+                opt_state = ckpt["optimizer_state"]
+            elif "optimizer" in ckpt and isinstance(ckpt["optimizer"], dict):
+                opt_state = ckpt["optimizer"]
+            if opt_state is not None:
+                try:
+                    optimizer.load_state_dict(opt_state)
+                except Exception as e:
+                    print(f"[warn] failed to load optimizer state: {e}")
+
+        epoch = int(ckpt.get("epoch", 0) or 0)
+        metrics = ckpt.get("metrics", {}) or {}
+        best = ckpt.get("best", None)
+        bad_count = ckpt.get("bad_count", None)
+        return epoch, metrics, best, bad_count
+
+    # if ckpt is not dict, it can't resume optimizer/epoch
+    raise RuntimeError("Checkpoint is not a dict; cannot resume training state.")
 
 
 def main():
@@ -79,6 +132,9 @@ def main():
             dir=str(run_dir),
             config=cfg,
         )
+        wandb.define_metric("epoch")
+        wandb.define_metric("*", step_metric="epoch")
+
 
     train_loader, val_loader, _, _ = build_loaders(cfg, sdlane_root, run_dir)
 
@@ -126,8 +182,10 @@ def main():
     mode = (cfg["train"]["checkpoint"]["mode"] or "max").lower()
     thr = float(cfg["eval"]["threshold"])
 
+    # default best/bad_count
     best = -1e9 if mode == "max" else 1e9
     bad_count = 0
+    start_epoch = 1
 
     def is_improved(current, best_val):
         if mode == "max":
@@ -135,9 +193,47 @@ def main():
         return current < (best_val - min_delta)
 
     # -----------------------------
+    # Resume (optional)
+    # -----------------------------
+    resume_path = cfg["train"].get("resume", None)
+    # allow nested cfg.train.resume.path style too
+    if isinstance(resume_path, dict):
+        resume_path = resume_path.get("path")
+
+    if resume_path:
+        ckpt_path = Path(resume_path)
+        if not ckpt_path.is_absolute():
+            ckpt_path = (run_dir / ckpt_path).resolve()
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"resume checkpoint not found: {ckpt_path}")
+
+        last_epoch, last_metrics, ckpt_best, ckpt_bad = load_checkpoint(
+            ckpt_path, model, optimizer=opt, device=device
+        )
+
+        start_epoch = int(last_epoch) + 1 if last_epoch is not None else 1
+
+        # best/bad_count 복원(있으면)
+        if ckpt_best is not None:
+            try:
+                best = float(ckpt_best)
+            except Exception:
+                pass
+        if ckpt_bad is not None:
+            try:
+                bad_count = int(ckpt_bad)
+            except Exception:
+                pass
+
+        print(f"🔁 Resumed from: {ckpt_path}")
+        print(f"   start_epoch={start_epoch}, best={best}, bad_count={bad_count}")
+        if use_wandb:
+            wandb.log({"resume/ckpt": str(ckpt_path), "resume/start_epoch": start_epoch}, step=start_epoch - 1)
+
+    # -----------------------------
     # Training loop
     # -----------------------------
-    for epoch in range(1, int(cfg["train"]["epochs"]) + 1):
+    for epoch in range(start_epoch, int(cfg["train"]["epochs"]) + 1):
         train_loss = train_one_epoch(
             model,
             train_loader,
@@ -183,6 +279,7 @@ def main():
         if improved:
             best = current
             bad_count = 0
+            # best 저장할 때 early-stop 상태도 같이 저장되도록 (checkpoint 함수가 dict 저장이면 아래 정보 포함 권장)
             save_checkpoint(run_dir / "checkpoints" / "best.pt", model, opt, epoch, metrics, cfg)
         else:
             if es_enabled and epoch > warmup_epochs:
@@ -212,6 +309,7 @@ def main():
             break
 
     if use_wandb:
+        import wandb
         wandb.finish()
 
     print(f"✅ Done. outputs: {run_dir}")
