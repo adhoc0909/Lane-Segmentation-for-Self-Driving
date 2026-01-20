@@ -1,3 +1,20 @@
+# python scripts/infer_video.py \
+#   --weights /Users/leehw/Documents/likelion/2nd_project/Lane-Segmentation-for-Self-Driving/outputs/exp001/checkpoints/unet_60epoch_best.onnx \
+#   --video /Volumes/T7/블박/sample2.mp4 \
+#   --out /Volumes/T7/블박/sample2_unet_60epoch_best.mp4 \
+#   --thr 0.5 \
+#   --resize 640 400
+
+
+# python scripts/infer_video.py \
+#   --weights /Volumes/T7/블박/outputs/yoloseg_30epoch_best_1024_1024.onnx \
+#   --video /Volumes/T7/블박/sample2.mp4 \
+#   --out /Volumes/T7/블박/sample2_yoloseg_30epoch_best_1024_1024.mp4 \
+#   --thr 0.5 \
+#   --resize 1024 1024
+
+
+
 from __future__ import annotations
 
 import argparse
@@ -9,6 +26,7 @@ import cv2
 import numpy as np
 import torch
 
+onnx_dynamic_hw = False
 
 # -----------------------------
 # bootstrap: allow "python scripts/infer_video.py" from repo root
@@ -38,6 +56,39 @@ def parse_args():
     p.add_argument("--save_mask", action="store_true")   # also save mask video
     return p.parse_args()
 
+def pad_to_stride(img: np.ndarray, stride: int = 32) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+    """
+    Pad H,W to be divisible by stride.
+    Returns padded_img and pads (top, bottom, left, right).
+    """
+    h, w = img.shape[:2]
+    pad_h = (stride - (h % stride)) % stride
+    pad_w = (stride - (w % stride)) % stride
+
+    top = pad_h // 2
+    bottom = pad_h - top
+    left = pad_w // 2
+    right = pad_w - left
+
+    if pad_h == 0 and pad_w == 0:
+        return img, (0, 0, 0, 0)
+
+    padded = cv2.copyMakeBorder(
+        img, top, bottom, left, right,
+        borderType=cv2.BORDER_CONSTANT,
+        value=(0, 0, 0),
+    )
+    return padded, (top, bottom, left, right)
+
+
+def unpad(img: np.ndarray, pads: tuple[int, int, int, int]) -> np.ndarray:
+    top, bottom, left, right = pads
+    if top == 0 and bottom == 0 and left == 0 and right == 0:
+        return img
+    h, w = img.shape[:2]
+    return img[top:h - bottom, left:w - right]
+
+
 
 def overlay_red(bgr: np.ndarray, mask01: np.ndarray, alpha: float) -> np.ndarray:
     """mask01: HxW (0/1)"""
@@ -64,8 +115,37 @@ def main():
         device = cfg.get("train", {}).get("device", "cuda")
     device = torch.device(device if torch.cuda.is_available() and "cuda" in str(device) else "cpu")
 
-    model = build_model(cfg).to(device).eval()
-    load_weights(Path(args.weights), model)
+    weights_path = Path(args.weights)
+    is_onnx = weights_path.suffix.lower() == ".onnx"
+
+    ort_sess = None
+    ort_input_name = None
+
+    if is_onnx:
+        try:
+            import onnxruntime as ort  # type: ignore
+        except Exception as e:
+            raise RuntimeError(
+                "ONNX inference requires onnxruntime. Install one of:\n"
+                "  pip install onnxruntime  (CPU)\n"
+                "  pip install onnxruntime-gpu  (CUDA)\n"
+            ) from e
+
+        providers = ["CPUExecutionProvider"]
+        if device.type == "cuda":
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+        ort_sess = ort.InferenceSession(str(weights_path), providers=providers)
+        print("ONNX inputs:", [(i.name, i.shape, i.type) for i in ort_sess.get_inputs()])
+        print("ONNX outputs:", [(o.name, o.shape, o.type) for o in ort_sess.get_outputs()])
+        in_shape = ort_sess.get_inputs()[0].shape  # e.g. [1, 3, 400, 640] or [1,3,'height','width']
+        # Only allow padding when H/W are dynamic (not fixed ints)
+        onnx_dynamic_hw = not (isinstance(in_shape[2], int) and isinstance(in_shape[3], int))
+
+        ort_input_name = ort_sess.get_inputs()[0].name
+    else:
+        model = build_model(cfg).to(device).eval()
+        load_weights(weights_path, model)
 
     video_path = str(args.video)
     cap = cv2.VideoCapture(video_path)
@@ -123,17 +203,42 @@ def main():
         # prepare model input
         inp = cv2.resize(frame, (net_w, net_h), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(inp, cv2.COLOR_BGR2RGB)
-        x = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
-        x = x.unsqueeze(0).to(device)
+        pads = (0, 0, 0, 0)
+        if is_onnx and onnx_dynamic_hw:
+            rgb, pads = pad_to_stride(rgb, stride=32)
 
-        logits = model(x)                     # [1,1,H,W] expected
-        prob = torch.sigmoid(logits)[0, 0]    # [H,W]
-        pred = (prob > thr).to(torch.uint8).cpu().numpy()  # 0/1
+
+
+
+        if is_onnx:
+            # ONNXRuntime expects NCHW float32
+            x_np = (rgb.transpose(2, 0, 1)[None, ...].astype(np.float32)) / 255.0
+            out = ort_sess.run(None, {ort_input_name: x_np})[0]
+            # out: (1,1,H,W) or (1,H,W) or (1,H,W,1)
+            if out.ndim == 4 and out.shape[-1] == 1:
+                out = np.transpose(out, (0, 3, 1, 2))
+            if out.ndim == 3:
+                out = out[:, None, :, :]
+            out2d = out[0, 0]
+            # Heuristic: if already probability (0~1), don't apply sigmoid again
+            if out2d.min() >= 0.0 and out2d.max() <= 1.0:
+                prob2d = out2d
+            else:
+                prob2d = 1.0 / (1.0 + np.exp(-out2d))
+            pred = (prob2d > thr).astype(np.uint8)
+            pred = unpad(pred, pads)
+        else:
+            x = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
+            x = x.unsqueeze(0).to(device)
+
+            logits = model(x)                     # [1,1,H,W] expected
+            prob = torch.sigmoid(logits)[0, 0]    # [H,W]
+            pred = (prob > thr).to(torch.uint8).cpu().numpy()  # 0/1
 
         # resize mask back to output size
         if (net_w, net_h) != (out_w, out_h):
             pred = cv2.resize(pred, (out_w, out_h), interpolation=cv2.INTER_NEAREST)
-
+        
         vis = overlay_red(frame, pred, alpha=args.alpha)
 
         # small HUD
