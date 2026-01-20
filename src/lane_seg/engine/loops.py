@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 
-from lane_seg.evaluation.metrics import dice_from_logits, iou_from_logits, prf_from_logits
+from lane_seg.evaluation.metrics import dice_from_logits, iou_from_logits, prf_from_logits, acc_from_logits
 
 
 def train_one_epoch(model, loader, optimizer, loss_fn, device, amp=True, grad_clip_norm=0.0):
@@ -28,7 +28,7 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device, amp=True, grad_cl
 @torch.no_grad()
 def validate(model, loader, loss_fn, device, thr=0.5):
     model.eval()
-    losses, dices, ious = [], [], []
+    losses, dices, ious, accs = [], [], [], []
     precs, recs, f1s = [], [], []
 
     for x, y in tqdm(loader, desc="val", leave=False):
@@ -40,11 +40,14 @@ def validate(model, loader, loss_fn, device, thr=0.5):
         losses.append(loss.item())
         dices.append(dice_from_logits(logits, y, thr=thr).mean().item())
         ious.append(iou_from_logits(logits, y, thr=thr).mean().item())
+        acc = acc_from_logits(logits, y, thr=thr)
+        accs.append(acc.mean().item())
 
         p, r, f1 = prf_from_logits(logits, y, thr=thr)
         precs.append(p.mean().item())
         recs.append(r.mean().item())
         f1s.append(f1.mean().item())
+     
 
     return {
         "val_loss": float(sum(losses) / max(1, len(losses))),
@@ -53,4 +56,5 @@ def validate(model, loader, loss_fn, device, thr=0.5):
         "precision": float(sum(precs) / max(1, len(precs))),
         "recall": float(sum(recs) / max(1, len(recs))),
         "f1": float(sum(f1s) / max(1, len(f1s))),
+        "acc": float(sum(accs) / max(1, len(accs))),
     }

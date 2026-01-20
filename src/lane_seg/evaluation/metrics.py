@@ -43,3 +43,20 @@ def prf_from_logits(logits, targets, thr=0.5, eps=1e-7):
     recall = (tp + eps) / (tp + fn + eps)
     f1 = (2 * precision * recall + eps) / (precision + recall + eps)
     return precision, recall, f1
+
+@torch.no_grad()
+def acc_from_logits(logits, targets, thr=0.5):
+    """
+    Pixel-wise Accuracy (background 포함)
+    logits:  [B,1,H,W]
+    targets: [B,1,H,W] (0/1)
+    return:  [B] accuracy per sample
+    """
+    probs = torch.sigmoid(logits)
+    preds = (probs > thr).float()
+
+    preds_f = preds.view(preds.size(0), -1)
+    t_f = targets.view(targets.size(0), -1)
+
+    correct = (preds_f == t_f).float().mean(dim=1)
+    return correct
