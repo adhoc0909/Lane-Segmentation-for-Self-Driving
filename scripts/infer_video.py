@@ -141,6 +141,8 @@ def main():
         in_shape = ort_sess.get_inputs()[0].shape  # e.g. [1, 3, 400, 640] or [1,3,'height','width']
         # Only allow padding when H/W are dynamic (not fixed ints)
         onnx_dynamic_hw = not (isinstance(in_shape[2], int) and isinstance(in_shape[3], int))
+        if isinstance(in_shape[2], int) and isinstance(in_shape[3], int):
+            onnx_h, onnx_w = int(in_shape[2]), int(in_shape[3])
 
         ort_input_name = ort_sess.get_inputs()[0].name
     else:
@@ -181,6 +183,9 @@ def main():
         net_w, net_h = int(img_size[0]), int(img_size[1])
     else:
         net_w, net_h = out_w, out_h
+
+    if is_onnx and isinstance(in_shape[2], int) and isinstance(in_shape[3], int):
+        net_w, net_h = onnx_w, onnx_h
 
     # NOTE: This assumes your model expects normalized RGB in [0,1].
     # If you used other normalization in training transforms, replicate it here.
@@ -238,6 +243,13 @@ def main():
         # resize mask back to output size
         if (net_w, net_h) != (out_w, out_h):
             pred = cv2.resize(pred, (out_w, out_h), interpolation=cv2.INTER_NEAREST)
+
+        # TEST
+        # print("input:", x_np.dtype, x_np.min(), x_np.max(), x_np.mean())
+        # out = ort_sess.run(None, {ort_input_name: x_np})[0]
+        # print("out(raw):", out.min(), out.max(), out.mean())
+        # prob = 1/(1+np.exp(-out))  # sigmoid
+        # print("prob:", prob.min(), prob.max(), prob.mean())
         
         vis = overlay_red(frame, pred, alpha=args.alpha)
 
@@ -284,6 +296,7 @@ def main():
     if args.save_mask:
         print(f"✅ saved mask video: {out_path.with_name(out_path.stem + '_mask.mp4')}")
 
+    
 
 if __name__ == "__main__":
     main()
