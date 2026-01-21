@@ -45,7 +45,7 @@ def train_yolo_seg(cfg: Dict[str, Any], sdlane_root: Path, run_dir: Path) -> Yol
         name="yolo",
         exist_ok=True,
         verbose=True,
-        workers=int(cfg["data"].get("num_workers", 32)),
+        workers=int(cfg["data"].get("num_workers", 16)),
         **hyp,
     )
 
