@@ -138,7 +138,7 @@ wandb:
 # -------------------------------------------------
 yolo:
   weights: yolo11n-seg.pt
-  imgsz: 1024
+  imgsz: [640, 400]
   epochs: 50
   batch: 8
   device: 0
