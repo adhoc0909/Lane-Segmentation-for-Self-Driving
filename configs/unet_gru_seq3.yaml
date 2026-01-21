@@ -21,7 +21,7 @@ data:
   frame_step: 1            # use consecutive frames (1=prev frame)
 
   val_ratio: 0.2
-  num_workers: 8
+  num_workers: 32
   pin_memory: true
   persistent_workers: true
   use_precomputed_masks: true
@@ -55,7 +55,7 @@ train:
     min_delta: 0.0
     warmup_epochs: 0
   device: cuda
-  batch_size: 4            # sequence models use more VRAM
+  batch_size: 64             # sequence models use more VRAM
   epochs: 30
   lr: 0.0003
   weight_decay: 0.00001
