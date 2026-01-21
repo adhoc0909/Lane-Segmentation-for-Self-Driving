@@ -80,6 +80,12 @@ def _dummy_input(batch: int, c: int, h: int, w: int, device: torch.device) -> to
     return x
 
 
+def _dummy_input_seq(batch: int, t: int, c: int, h: int, w: int, device: torch.device) -> torch.Tensor:
+    """Sequence dummy input: [B,T,C,H,W]."""
+    x = torch.randn(batch, t, c, h, w, device=device, dtype=torch.float32)
+    return x
+
+
 def _export_torch_model_to_onnx(
     model: torch.nn.Module,
     out_path: Path,
@@ -94,10 +100,19 @@ def _export_torch_model_to_onnx(
 
     dynamic_axes = None
     if dynamic:
-        dynamic_axes = {
-            "input": {0: "batch", 2: "height", 3: "width"},
-            "output": {0: "batch", 2: "height", 3: "width"},
-        }
+        if dummy.ndim == 4:
+            dynamic_axes = {
+                "input": {0: "batch", 2: "height", 3: "width"},
+                "output": {0: "batch", 2: "height", 3: "width"},
+            }
+        elif dummy.ndim == 5:
+            # input: [B,T,C,H,W], output: [B,classes,H,W]
+            dynamic_axes = {
+                "input": {0: "batch", 1: "time", 3: "height", 4: "width"},
+                "output": {0: "batch", 2: "height", 3: "width"},
+            }
+        else:
+            dynamic_axes = {"input": {0: "batch"}, "output": {0: "batch"}}
 
     torch.onnx.export(
         model,
@@ -220,11 +235,19 @@ def export_auto(in_path: Path, out_path: Path, args) -> Tuple[str, Path]:
         cfg = load_yaml(args.config)
         model = build_model(cfg).to(device).eval()
 
+        # If the config indicates a sequence-based model, export with 5D input [B,T,C,H,W].
+        seq_len = int((cfg.get("data", {}) or {}).get("sequence_len", 1) or 1)
+        arch = str(((cfg.get("model", {}) or {}).get("arch", "") or "")).lower()
+        if seq_len > 1 or arch in ("unet_gru", "unet_convlstm", "unet_lstm"):
+            dummy_in = _dummy_input_seq(args.batch, seq_len, args.c, args.h, args.w, device)
+        else:
+            dummy_in = dummy
+
         # Try to load weights; if it's a pure state_dict without known keys,
         # load_weights should handle common formats in your repo.
         load_weights(in_path, model)
 
-        _export_torch_model_to_onnx(model, out_path, dummy, args.opset, args.dynamic)
+        _export_torch_model_to_onnx(model, out_path, dummy_in, args.opset, args.dynamic)
         return "lane_seg", out_path
 
     raise RuntimeError("Unsupported input for export. Try --backend ultralytics/lane_seg/mmseg/torchscript explicitly.")

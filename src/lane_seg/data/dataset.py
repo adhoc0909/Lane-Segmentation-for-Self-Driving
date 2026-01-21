@@ -160,3 +160,138 @@ class SDLaneDataset(Dataset):
             mask_t = torch.from_numpy(mask).unsqueeze(0).float()
 
         return img_t, mask_t
+
+
+class SDLaneSequenceDataset(SDLaneDataset):
+    """Sequence dataset for recurrent models.
+
+    Returns:
+      - x_seq: [T,C,H,W]  (T=sequence_len, ordered oldest->newest)
+      - y_last: [1,H,W]  (label for the last frame)
+
+    Notes:
+      - We only supervise the *last* frame by default to keep training loops unchanged.
+      - For frames near the start of a scene where previous frames are missing,
+        we pad by repeating the earliest available frame.
+    """
+
+    def __init__(
+        self,
+        sdlane_root: Path,
+        list_file: Path,
+        cfg,
+        transforms=None,
+        split_dir: str = "",
+        sequence_len: int = 3,
+        frame_step: int = 1,
+    ):
+        super().__init__(sdlane_root, list_file, cfg, transforms=transforms, split_dir=split_dir)
+        self.sequence_len = max(1, int(sequence_len))
+        self.frame_step = max(1, int(frame_step))
+
+        # Build a per-scene index to fetch previous frames quickly.
+        # items are strings like ".../<scene>/<frame>" (without extension)
+        self._scene_to_frames = {}
+        self._scene_to_pos = {}
+        for item in self.items:
+            scene, frame = self._parse_item(item)
+            self._scene_to_frames.setdefault(scene, []).append(frame)
+
+        for scene, frames in self._scene_to_frames.items():
+            # Prefer numeric sorting if possible
+            def _key(f: str):
+                try:
+                    return int(f)
+                except Exception:
+                    return f
+
+            frames_sorted = sorted(frames, key=_key)
+            self._scene_to_frames[scene] = frames_sorted
+            self._scene_to_pos[scene] = {f: i for i, f in enumerate(frames_sorted)}
+
+    def _get_prev_frames(self, scene: str, frame: str) -> List[str]:
+        frames = self._scene_to_frames.get(scene, [])
+        pos_map = self._scene_to_pos.get(scene, {})
+        if not frames or frame not in pos_map:
+            return [frame] * self.sequence_len
+
+        cur = pos_map[frame]
+        needed = []
+        for k in range(self.sequence_len):
+            idx = cur - (self.sequence_len - 1 - k) * self.frame_step
+            if idx < 0:
+                idx = 0
+            needed.append(frames[idx])
+        return needed
+
+    def __getitem__(self, idx):
+        scene, frame = self._parse_item(self.items[idx])
+        base = self.root if self.split_dir == "" else (self.root / self.split_dir)
+
+        frames = self._get_prev_frames(scene, frame)
+        # last frame determines the label
+        last_frame = frames[-1]
+
+        # Load RGB images for all frames
+        imgs = []
+        h0 = w0 = None
+        for fr in frames:
+            img_bgr = self._read_image(base, scene, fr)
+            img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            if h0 is None:
+                h0, w0 = img.shape[:2]
+            imgs.append(img)
+
+        assert h0 is not None and w0 is not None
+
+        # Load mask for the last frame only
+        lbl_path = base / "labels" / scene / f"{last_frame}.json"
+        mask_path = base / self.mask_subdir / scene / f"{last_frame}.{self.mask_ext}"
+
+        if self.use_precomputed_masks:
+            try:
+                mask = self._load_precomputed_mask(mask_path, h0, w0)
+            except Exception:
+                if not self.fallback_to_json:
+                    raise
+                mask = self._label_to_mask(lbl_path, h0, w0)
+        else:
+            mask = self._label_to_mask(lbl_path, h0, w0)
+
+        # Apply transforms (must be seq-aware via build_*_transforms_seq)
+        if self.transforms is not None:
+            payload = {"image": imgs[-1], "mask": mask}
+            # previous frames as image1..image{T-1}
+            for i in range(self.sequence_len - 1):
+                payload[f"image{i+1}"] = imgs[i]
+            out = self.transforms(**payload)
+
+            # Albumentations returns torch tensors if ToTensorV2 exists
+            img_last = out["image"]
+            mask = out["mask"]
+            imgs_t = []
+            # reconstruct ordered oldest->newest
+            for i in range(self.sequence_len - 1):
+                imgs_t.append(out[f"image{i+1}"])
+            imgs_t.append(img_last)
+        else:
+            imgs_t = [torch.from_numpy(im).permute(2, 0, 1).float() / 255.0 for im in imgs]
+
+        # Ensure tensor formats
+        x_seq = []
+        for im in imgs_t:
+            if isinstance(im, torch.Tensor):
+                x_seq.append(im)
+            else:
+                x_seq.append(torch.from_numpy(im).permute(2, 0, 1).float() / 255.0)
+        x_seq_t = torch.stack(x_seq, dim=0)  # [T,C,H,W]
+
+        if isinstance(mask, torch.Tensor):
+            if mask.ndim == 2:
+                y_t = mask.unsqueeze(0).float()
+            else:
+                y_t = mask.float()
+        else:
+            y_t = torch.from_numpy(mask).unsqueeze(0).float()
+
+        return x_seq_t, y_t

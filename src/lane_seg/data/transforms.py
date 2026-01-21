@@ -209,3 +209,29 @@ def build_val_transforms(cfg):
     ops = [A.Resize(height=H, width=W)]
     ops += _imgnet_normalize_ops()
     return A.Compose(ops)
+
+
+def build_train_transforms_seq(cfg, seq_len: int):
+    """Train transforms for sequence inputs.
+
+    We apply the *same* geometric/photometric augmentation parameters to all frames
+    using Albumentations `additional_targets`.
+
+    Expected keys from the dataset:
+      - image (last frame)
+      - image1..image{seq_len-1} (previous frames)
+      - mask (label for the last frame)
+    """
+    seq_len = int(seq_len)
+    base = build_train_transforms(cfg)
+    # Rebuild with the same ops but with additional_targets.
+    additional_targets = {f"image{i}": "image" for i in range(1, seq_len)}
+    return A.Compose(base.transforms, additional_targets=additional_targets)
+
+
+def build_val_transforms_seq(cfg, seq_len: int):
+    """Val transforms for sequence inputs (same resize/normalize for all frames)."""
+    seq_len = int(seq_len)
+    base = build_val_transforms(cfg)
+    additional_targets = {f"image{i}": "image" for i in range(1, seq_len)}
+    return A.Compose(base.transforms, additional_targets=additional_targets)

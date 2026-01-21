@@ -1,0 +1,89 @@
+project:
+  name: sdlane-unet-gru-seq3
+  seed: 42
+
+paths:
+  sdlane_root: null
+  out_dir: outputs
+  run_name: exp_unet_gru_seq3
+
+data:
+  splits:
+    train:
+      dir: "train"
+      list: "train_list.txt"
+    test:
+      dir: "test"
+      list: "test_list.txt"
+  image_size: [640, 400]   # W,H
+  # Sequence settings
+  sequence_len: 3          # T frames (oldest -> newest)
+  frame_step: 1            # use consecutive frames (1=prev frame)
+
+  val_ratio: 0.2
+  num_workers: 16
+  pin_memory: true
+  persistent_workers: true
+  use_precomputed_masks: true
+  mask_subdir: "masks"
+  mask_ext: "png"
+  fallback_to_json: false
+
+augment:
+  enabled: true
+  # Keep geometric aug low for temporal consistency
+  hflip_p: 0.0
+  shift_scale_rotate_p: 0.0
+
+  # Photometric (OK for sequences)
+  brightness_contrast_p: 0.2
+  gamma_p: 0.1
+  blur_p: 0.05
+
+model:
+  arch: unet_gru
+  encoder: resnet34
+  pretrained: true
+  in_channels: 3
+  num_classes: 1
+  gru_hidden_mul: 1.0      # hidden_channels = bottleneck_channels * mul
+
+train:
+  early_stop:
+    enabled: true
+    patience: 15
+    min_delta: 0.0
+    warmup_epochs: 0
+  device: cuda
+  batch_size: 4            # sequence models use more VRAM
+  epochs: 30
+  lr: 0.0003
+  weight_decay: 0.00001
+  amp: true
+  grad_clip_norm: 1.0
+  scheduler:
+    name: cosine
+    t_max: 30
+  checkpoint:
+    save_every: 5
+    metric: dice
+    mode: max
+  resume: null
+
+loss:
+  name: bce_dice
+  bce_weight: 0.5
+  dice_weight: 0.5
+  smooth: 1.0
+
+eval:
+  threshold: 0.5
+
+infer:
+  weights: null
+
+wandb:
+  enabled: true
+  project: "lane-segmentation"
+  entity: null
+  watch: false

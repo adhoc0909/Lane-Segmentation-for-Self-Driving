@@ -6,8 +6,19 @@ from typing import Tuple
 from torch.utils.data import DataLoader
 
 from lane_seg.data.split import make_splits
-from lane_seg.data.transforms import build_train_transforms, build_val_transforms
-from lane_seg.data.dataset import SDLaneDataset
+from lane_seg.data.transforms import (
+    build_train_transforms,
+    build_val_transforms,
+    build_train_transforms_seq,
+    build_val_transforms_seq,
+)
+from lane_seg.data.dataset import SDLaneDataset, SDLaneSequenceDataset
+
+
+def _use_sequence_dataset(cfg) -> bool:
+    seq_len = int((cfg.get("data", {}) or {}).get("sequence_len", 1) or 1)
+    arch = str(((cfg.get("model", {}) or {}).get("arch", "") or "")).lower()
+    return seq_len > 1 or arch in ("unet_gru", "unet_convlstm", "unet_lstm")
 
 
 def _get_split_cfg(cfg, split: str) -> Tuple[str, str]:
@@ -76,13 +87,26 @@ def build_loaders(cfg, sdlane_root: Path, run_dir: Path, test: bool = False):
         if not test_txt.exists():
             raise FileNotFoundError(f"test list not found. tried: {test_txt}")
 
-        test_ds = SDLaneDataset(
-            sdlane_root,
-            test_txt,
-            cfg,
-            transforms=build_val_transforms(cfg),
-            split_dir=test_split_dir,
-        )
+        if _use_sequence_dataset(cfg):
+            seq_len = int((cfg.get("data", {}) or {}).get("sequence_len", 3) or 3)
+            frame_step = int((cfg.get("data", {}) or {}).get("frame_step", 1) or 1)
+            test_ds = SDLaneSequenceDataset(
+                sdlane_root,
+                test_txt,
+                cfg,
+                transforms=build_val_transforms_seq(cfg, seq_len),
+                split_dir=test_split_dir,
+                sequence_len=seq_len,
+                frame_step=frame_step,
+            )
+        else:
+            test_ds = SDLaneDataset(
+                sdlane_root,
+                test_txt,
+                cfg,
+                transforms=build_val_transforms(cfg),
+                split_dir=test_split_dir,
+            )
         test_loader = DataLoader(test_ds, shuffle=False, drop_last=False, **dl_args)
         return test_loader, test_txt
 
@@ -104,20 +128,42 @@ def build_loaders(cfg, sdlane_root: Path, run_dir: Path, test: bool = False):
         int(cfg["project"]["seed"]),
     )
 
-    train_ds = SDLaneDataset(
-        sdlane_root,
-        train_txt,
-        cfg,
-        transforms=build_train_transforms(cfg),
-        split_dir=train_split_dir,
-    )
-    val_ds = SDLaneDataset(
-        sdlane_root,
-        val_txt,
-        cfg,
-        transforms=build_val_transforms(cfg),
-        split_dir=train_split_dir,
-    )
+    if _use_sequence_dataset(cfg):
+        seq_len = int((cfg.get("data", {}) or {}).get("sequence_len", 3) or 3)
+        frame_step = int((cfg.get("data", {}) or {}).get("frame_step", 1) or 1)
+        train_ds = SDLaneSequenceDataset(
+            sdlane_root,
+            train_txt,
+            cfg,
+            transforms=build_train_transforms_seq(cfg, seq_len),
+            split_dir=train_split_dir,
+            sequence_len=seq_len,
+            frame_step=frame_step,
+        )
+        val_ds = SDLaneSequenceDataset(
+            sdlane_root,
+            val_txt,
+            cfg,
+            transforms=build_val_transforms_seq(cfg, seq_len),
+            split_dir=train_split_dir,
+            sequence_len=seq_len,
+            frame_step=frame_step,
+        )
+    else:
+        train_ds = SDLaneDataset(
+            sdlane_root,
+            train_txt,
+            cfg,
+            transforms=build_train_transforms(cfg),
+            split_dir=train_split_dir,
+        )
+        val_ds = SDLaneDataset(
+            sdlane_root,
+            val_txt,
+            cfg,
+            transforms=build_val_transforms(cfg),
+            split_dir=train_split_dir,
+        )
 
     train_loader = DataLoader(train_ds, shuffle=True, drop_last=True, **dl_args)
     val_loader = DataLoader(val_ds, shuffle=False, drop_last=False, **dl_args)
