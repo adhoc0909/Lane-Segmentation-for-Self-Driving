@@ -3,6 +3,7 @@ torchvision
 segmentation-models-pytorch
 opencv-python
 albumentations
+ultralytics>=8.3.0
 numpy
 pyyaml
 tqdm

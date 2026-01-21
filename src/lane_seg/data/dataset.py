@@ -136,6 +136,27 @@ class SDLaneDataset(Dataset):
             out = self.transforms(image=img, mask=mask)
             img, mask = out["image"], out["mask"]
 
-        img = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
-        mask = torch.from_numpy(mask).unsqueeze(0).float()
-        return img, mask
+        # -------------------------------------------------
+        # Robust tensor conversion
+        # - If transforms include ToTensorV2(), they already return torch.Tensor.
+        # - Otherwise, we convert from numpy here (backward compatible).
+        # -------------------------------------------------
+        if isinstance(img, torch.Tensor):
+            # Expect CHW float tensor
+            img_t = img
+        else:
+            # Expect HWC uint8 numpy
+            img_t = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+
+        if isinstance(mask, torch.Tensor):
+            # ToTensorV2 returns HW tensor for mask (uint8/long), make it [1,H,W] float
+            if mask.ndim == 2:
+                mask_t = mask.unsqueeze(0)
+            else:
+                mask_t = mask
+            mask_t = mask_t.float()
+        else:
+            # Expect HW uint8 numpy (0/1)
+            mask_t = torch.from_numpy(mask).unsqueeze(0).float()
+
+        return img_t, mask_t

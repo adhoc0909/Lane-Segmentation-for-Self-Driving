@@ -15,7 +15,7 @@ data:
       test:
         dir: "test"
         list: "test_list.txt"
-  image_size: [640, 416]   # W,H
+  image_size: [640, 400]   # W,H
   #image_size: [1024, 1024]
   lane_thickness: 6
   val_ratio: 0.2
@@ -30,10 +30,54 @@ data:
 
 augment:
   enabled: true
+  # --- geometric ---
   hflip_p: 0.0
+  shift_scale_rotate_p: 0.0
+  shift_limit: 0.02
+  scale_limit: 0.05
+  rotate_limit: 3.0
+
+  # --- photometric ---
+  clahe_p: 0.0
+  clahe_clip_limit: 2.0
+  clahe_tile_grid_size: [8, 8]
   brightness_contrast_p: 0.2
+  brightness_limit: 0.2
+  contrast_limit: 0.2
   gamma_p: 0.1
-  blur_p: 0.05
+  gamma_limit: [80, 120]
+  hsv_p: 0.0
+  hue_shift_limit: 10
+  sat_shift_limit: 15
+  val_shift_limit: 10
+  rgb_shift_p: 0.0
+  r_shift_limit: 10
+  g_shift_limit: 10
+  b_shift_limit: 10
+
+  # --- blur/noise/compression ---
+  blur_p: 0.05  # backward compatible alias
+  gaussian_blur_p: 0.0
+  gaussian_blur_limit: [3, 5]
+  motion_blur_p: 0.0
+  motion_blur_limit: 5
+  gauss_noise_p: 0.0
+  gauss_noise_var_limit: [10.0, 50.0]
+  gauss_noise_mean: 0.0
+  jpeg_p: 0.0
+  jpeg_quality_lower: 70
+  jpeg_quality_upper: 100
+
+  # --- weather ---
+  rain_p: 0.0
+  rain_drop_length: 20
+  rain_drop_width: 1
+  rain_blur_value: 3
+  rain_brightness_coeff: 0.9
+  fog_p: 0.0
+  fog_coef_lower: 0.1
+  fog_coef_upper: 0.3
+  fog_alpha_coef: 0.08
 
 model:
   arch: unet
@@ -86,3 +130,22 @@ wandb:
   project: "lane-segmentation"
   entity: null           # 개인 계정이면 null
   watch: false           # true면 gradient/parameter 추적 (무거움)
+
+# -------------------------------------------------
+# YOLOv11-seg backend (instance segmentation)
+# - We train on dataset converted from SDLane binary lane masks.
+# - We treat lane as a single class (0) and union instance masks at inference.
+# -------------------------------------------------
+yolo:
+  weights: yolo11n-seg.pt
+  imgsz: 1024
+  epochs: 50
+  batch: 8
+  device: 0
+  conf: 0.25
+  iou: 0.7
+  classes: null
+  link_files: true           # symlink images to save disk (falls back to copy if not supported)
+  poly_simplify_eps: 1.5     # contour simplification (% of perimeter)
+  poly_min_area: 16.0
+  hyp: {}                    # extra ultralytics train kwargs (e.g., lr0, mosaic, hsv, etc.)
