@@ -29,7 +29,7 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    imgsz = args.yolo_imgsz  # 예: [640] 또는 [640, 400]
+    imgsz = args.yolo.imgsz  # 예: [640] 또는 [640, 400]
 
     if isinstance(imgsz, list):
         if len(imgsz) == 1:
