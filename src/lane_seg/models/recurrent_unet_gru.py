@@ -100,16 +100,17 @@ class RecurrentUNetGRU(nn.Module):
             xt = x[:, ti]
             feats = self.unet.encoder(xt)
 
-            # feats is a list: [stage0, stage1, ..., bottleneck]
             bottleneck = feats[-1]
             h_state = self.gru(bottleneck, h_state)
             bottleneck_refined = self.hid_to_bottleneck(h_state)
+
             feats = list(feats)
             feats[-1] = bottleneck_refined
 
-            dec = self.unet.decoder(*feats)
+            dec = self.unet.decoder(feats)
             logits = self.unet.segmentation_head(dec)
             logits_last = logits
+
 
         assert logits_last is not None
         return logits_last
